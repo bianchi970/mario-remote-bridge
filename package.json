@@ -1,0 +1,18 @@
+{
+  "name": "mario-remote-bridge",
+  "version": "1.0.0",
+  "description": "MARIO Remote Bridge — relay sicuro Pi ↔ Hetzner",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test/bridge.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ws": "^8.19.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
