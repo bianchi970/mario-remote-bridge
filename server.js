@@ -11,9 +11,14 @@
  *   BRIDGE_AGENT_TOKEN   token segreto che il Pi usa per autenticarsi
  *   BRIDGE_RELAY_TOKEN   token segreto che mario-web usa per autenticarsi
  *
+ * Multi-hub: ogni Pi si identifica con hub_id (query param WS).
+ * Il relay payload include hub_id facoltativo per instradare al Pi corretto.
+ * Backward compat: se hub_id assente e c'è un solo Pi connesso, usa quello.
+ *
  * Flusso:
- *   Pi  → WS connect (BRIDGE_AGENT_TOKEN)
- *   Web → POST /relay (BRIDGE_RELAY_TOKEN) → WS → Pi → hub → risposta → Web
+ *   Pi  → WS connect ?token=TOKEN&hub_id=ID
+ *   Web → POST /relay { hub_id?, method, path, headers, body }
+ *      → WS → Pi → hub → risposta → Web
  */
 
 const http    = require('http');
@@ -41,16 +46,25 @@ function createBridgeServer({
   relayToken      = '',
   relayTimeoutMs  = 10_000,
 } = {}) {
-  /** Socket WebSocket del Pi agent attualmente connesso (uno solo). */
-  let agentSocket = null;
+  /** Map<hub_id, WebSocket> — un socket per Pi registrato. */
+  const agents = new Map();
 
-  /** Richieste in attesa di risposta dal Pi. id → { resolve, reject, timer } */
+  /** Richieste in attesa di risposta. id → { resolve, reject, timer, ws } */
   const pending = new Map();
 
   // ── Relay core ─────────────────────────────────────────────────────────────
 
-  function relay({ method, path, headers = {}, body = null }) {
-    if (!agentSocket || agentSocket.readyState !== WebSocket.OPEN) {
+  function relay({ hub_id, method, path, headers = {}, body = null }) {
+    let socket = null;
+
+    if (hub_id) {
+      socket = agents.get(hub_id) || null;
+    } else if (agents.size === 1) {
+      // backward compat: un solo Pi connesso, usalo
+      socket = agents.values().next().value;
+    }
+
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error('agent_disconnected'));
     }
 
@@ -62,9 +76,9 @@ function createBridgeServer({
         reject(new Error('timeout'));
       }, relayTimeoutMs);
 
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, ws: socket });
 
-      agentSocket.send(JSON.stringify({ id, method, path, headers, body }), (err) => {
+      socket.send(JSON.stringify({ id, method, path, headers, body }), (err) => {
         if (err) {
           clearTimeout(timer);
           pending.delete(id);
@@ -79,8 +93,9 @@ function createBridgeServer({
   const wss = new WebSocketServer({ port: agentPort });
 
   wss.on('connection', (ws, req) => {
-    const url   = new URL(req.url, 'http://localhost');
-    const token = url.searchParams.get('token') || '';
+    const url    = new URL(req.url, 'http://localhost');
+    const token  = url.searchParams.get('token') || '';
+    const hubId  = url.searchParams.get('hub_id') || 'default';
 
     if (agentToken && token !== agentToken) {
       console.log('[bridge] agent rifiutato: token non valido');
@@ -88,13 +103,14 @@ function createBridgeServer({
       return;
     }
 
-    console.log('[bridge] Pi agent connesso da', req.socket.remoteAddress);
+    console.log(`[bridge] Pi agent connesso hub_id="${hubId}" da ${req.socket.remoteAddress}`);
 
-    // Disconnetti agente precedente
-    if (agentSocket && agentSocket.readyState === WebSocket.OPEN) {
-      agentSocket.close(1001, 'replaced');
+    // Disconnetti agente precedente per lo stesso hub_id
+    if (agents.has(hubId)) {
+      const old = agents.get(hubId);
+      if (old.readyState === WebSocket.OPEN) old.close(1001, 'replaced');
     }
-    agentSocket = ws;
+    agents.set(hubId, ws);
 
     ws.on('message', (data) => {
       let msg;
@@ -109,13 +125,16 @@ function createBridgeServer({
     });
 
     ws.on('close', () => {
-      console.log('[bridge] Pi agent disconnesso');
-      if (agentSocket === ws) agentSocket = null;
+      console.log(`[bridge] Pi agent disconnesso hub_id="${hubId}"`);
+      if (agents.get(hubId) === ws) agents.delete(hubId);
 
+      // Rigetta solo le pending di questo ws
       for (const [id, entry] of pending) {
-        clearTimeout(entry.timer);
-        entry.reject(new Error('agent_disconnected'));
-        pending.delete(id);
+        if (entry.ws === ws) {
+          clearTimeout(entry.timer);
+          entry.reject(new Error('agent_disconnected'));
+          pending.delete(id);
+        }
       }
     });
 
@@ -134,7 +153,9 @@ function createBridgeServer({
     if (req.method === 'GET' && req.url === '/status') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        agent_connected:  agentSocket !== null && agentSocket.readyState === WebSocket.OPEN,
+        agent_connected:  agents.size > 0,          // backward compat
+        agents_connected: agents.size,
+        hub_ids:          [...agents.keys()],
         pending_requests: pending.size,
         ts:               new Date().toISOString(),
       }));

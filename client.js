@@ -12,6 +12,7 @@
  *   MARIO_BRIDGE_TOKEN   Token agente (deve corrispondere a BRIDGE_AGENT_TOKEN sul server)
  *
  * Env opzionali:
+ *   HUB_ID               Identificatore univoco di questo impianto (default: "default")
  *   HUB_URL              URL dell'hub locale  (default: http://localhost:4001)
  *   RECONNECT_DELAY_MS   Attesa base prima di riconnettersi  (default: 5000)
  *   MAX_RECONNECT_MS     Attesa massima tra riconnessioni    (default: 60000)
@@ -27,6 +28,7 @@ const { WebSocket } = require('ws');
  * @param {object} opts
  * @param {string}  opts.bridgeUrl
  * @param {string}  opts.bridgeToken
+ * @param {string}  opts.hubId           identificatore univoco impianto (default: "default")
  * @param {string}  opts.hubUrl
  * @param {number}  opts.reconnectDelayMs
  * @param {number}  opts.maxReconnectMs
@@ -35,6 +37,7 @@ const { WebSocket } = require('ws');
 function createBridgeClient({
   bridgeUrl,
   bridgeToken      = '',
+  hubId            = 'default',
   hubUrl           = 'http://localhost:4001',
   reconnectDelayMs = 5_000,
   maxReconnectMs   = 60_000,
@@ -49,11 +52,16 @@ function createBridgeClient({
   function connect() {
     if (stopped) return;
 
-    const url = `${bridgeUrl}${bridgeToken ? `?token=${encodeURIComponent(bridgeToken)}` : ''}`;
+    const params = new URLSearchParams();
+    if (bridgeToken) params.set('token', bridgeToken);
+    if (hubId)       params.set('hub_id', hubId);
+    const qs = params.toString();
+    const url = bridgeUrl + (qs ? `?${qs}` : '');
+
     ws = new WebSocket(url);
 
     ws.on('open', () => {
-      console.log('[bridge-client] connesso a', bridgeUrl);
+      console.log(`[bridge-client] connesso hub_id="${hubId}" → ${bridgeUrl}`);
       delay = reconnectDelayMs; // reset backoff
     });
 
@@ -163,6 +171,7 @@ if (require.main === module) {
 
   const BRIDGE_URL   = process.env.MARIO_BRIDGE_URL   || '';
   const BRIDGE_TOKEN = process.env.MARIO_BRIDGE_TOKEN || '';
+  const HUB_ID       = process.env.HUB_ID             || 'default';
   const HUB_URL      = process.env.HUB_URL            || 'http://localhost:4001';
 
   if (!BRIDGE_URL) {
@@ -173,10 +182,11 @@ if (require.main === module) {
   createBridgeClient({
     bridgeUrl:        BRIDGE_URL,
     bridgeToken:      BRIDGE_TOKEN,
+    hubId:            HUB_ID,
     hubUrl:           HUB_URL,
     reconnectDelayMs: parseInt(process.env.RECONNECT_DELAY_MS || '5000', 10),
     maxReconnectMs:   parseInt(process.env.MAX_RECONNECT_MS   || '60000', 10),
   });
 
-  console.log(`[bridge-client] avviato → ${BRIDGE_URL}`);
+  console.log(`[bridge-client] avviato hub_id="${HUB_ID}" → ${BRIDGE_URL}`);
 }

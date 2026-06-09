@@ -62,9 +62,13 @@ function startServer(opts) {
   });
 }
 
-function connectPi(agentPort, token) {
+function connectPi(agentPort, token, hubId) {
   return new Promise((resolve, reject) => {
-    const url = `ws://127.0.0.1:${agentPort}${token ? `?token=${token}` : ''}`;
+    const params = new URLSearchParams();
+    if (token) params.set('token', token);
+    if (hubId)  params.set('hub_id', hubId);
+    const qs  = params.toString();
+    const url = `ws://127.0.0.1:${agentPort}${qs ? `?${qs}` : ''}`;
     const ws = new WebSocket(url);
     ws.on('open', () => resolve(ws));
     ws.on('error', reject);
@@ -73,6 +77,21 @@ function connectPi(agentPort, token) {
 
 function getPort(server) {
   return server.address().port;
+}
+
+// ── Helpers mock Pi ───────────────────────────────────────────────────────────
+
+/** Attacca handler echo standard a un Pi ws. Risponde con echoed_path e il hubId indicato. */
+function attachEcho(ws, hubId) {
+  ws.on('message', (raw) => {
+    const msg = JSON.parse(String(raw));
+    ws.send(JSON.stringify({
+      id:           msg.id,
+      status:       200,
+      headers:      { 'content-type': 'application/json' },
+      body:         JSON.stringify({ ok: true, echoed_path: msg.path, echoed_method: msg.method, from_hub: hubId }),
+    }));
+  });
 }
 
 // ── Test suite ────────────────────────────────────────────────────────────────
@@ -136,7 +155,7 @@ async function run() {
   ok('Pi token errato → chiusura 1008', badClose === 1008);
 
   // ── 6. Pi si connette con token corretto ─────────────────────────────────
-  const piWs = await connectPi(wsPort, AGENT_TOKEN);
+  const piWs = await connectPi(wsPort, AGENT_TOKEN, 'default');
   ok('Pi connesso', piWs.readyState === WebSocket.OPEN);
 
   // ── 7. Status mostra agent_connected = true ──────────────────────────────
@@ -145,15 +164,7 @@ async function run() {
   ok('agent_connected true dopo connessione', JSON.parse(status2.body).agent_connected === true);
 
   // ── 8-10. Relay E2E ───────────────────────────────────────────────────────
-  piWs.on('message', (raw) => {
-    const msg = JSON.parse(String(raw));
-    piWs.send(JSON.stringify({
-      id:           msg.id,
-      status:       200,
-      headers:      { 'content-type': 'application/json' },
-      body:         JSON.stringify({ ok: true, echoed_path: msg.path, echoed_method: msg.method }),
-    }));
-  });
+  attachEcho(piWs, 'default');
 
   const relayOk = await httpPost(relayPort, '/relay',
     { method: 'GET', path: '/api/hub/devices' },
@@ -173,7 +184,7 @@ async function run() {
   const wsPort2    = bridge2.wss._server.address().port;
   const relayPort2 = getPort(bridge2.relayServer);
 
-  const silentPi = await connectPi(wsPort2, AGENT_TOKEN);
+  const silentPi = await connectPi(wsPort2, AGENT_TOKEN, 'default');
   // silentPi non risponde mai
   const relayTout = await httpPost(relayPort2, '/relay',
     { method: 'GET', path: '/api/hub/health' },
@@ -190,6 +201,59 @@ async function run() {
   ok('agent_connected false dopo disconnessione', JSON.parse(status3.body).agent_connected === false);
 
   bridge.close();
+
+  // ── 13-17. Multi-hub: bridge con due Pi e hub_id diversi ─────────────────
+  const bridge3 = await startServer({
+    agentPort: 0, relayPort: 0, relayHost: '127.0.0.1',
+    agentToken: AGENT_TOKEN, relayToken: RELAY_TOKEN, relayTimeoutMs: 500,
+  });
+  const wsPort3    = bridge3.wss._server.address().port;
+  const relayPort3 = getPort(bridge3.relayServer);
+
+  const piA = await connectPi(wsPort3, AGENT_TOKEN, 'hub-A');
+  const piB = await connectPi(wsPort3, AGENT_TOKEN, 'hub-B');
+  attachEcho(piA, 'hub-A');
+  attachEcho(piB, 'hub-B');
+  await new Promise((r) => setTimeout(r, 50));
+
+  // 13. Status mostra agents_connected=2 e hub_ids
+  const status4 = await httpGet(relayPort3, '/status');
+  const s4 = JSON.parse(status4.body);
+  ok('multi-hub: agents_connected=2', s4.agents_connected === 2);
+  ok('multi-hub: hub_ids contiene hub-A e hub-B',
+    Array.isArray(s4.hub_ids) && s4.hub_ids.includes('hub-A') && s4.hub_ids.includes('hub-B'));
+
+  // 14. Relay hub-A → risposta da hub-A
+  const rA = await httpPost(relayPort3, '/relay',
+    { hub_id: 'hub-A', method: 'GET', path: '/api/hub/devices' },
+    { Authorization: `Bearer ${RELAY_TOKEN}` },
+  );
+  ok('multi-hub: relay hub-A risponde hub-A', rA.status === 200 && JSON.parse(rA.body).from_hub === 'hub-A');
+
+  // 15. Relay hub-B → risposta da hub-B
+  const rB = await httpPost(relayPort3, '/relay',
+    { hub_id: 'hub-B', method: 'GET', path: '/api/hub/devices' },
+    { Authorization: `Bearer ${RELAY_TOKEN}` },
+  );
+  ok('multi-hub: relay hub-B risponde hub-B', rB.status === 200 && JSON.parse(rB.body).from_hub === 'hub-B');
+
+  // 16. Relay hub-id inesistente → 503
+  const rMiss = await httpPost(relayPort3, '/relay',
+    { hub_id: 'hub-INESISTENTE', method: 'GET', path: '/api/hub/health' },
+    { Authorization: `Bearer ${RELAY_TOKEN}` },
+  );
+  ok('multi-hub: hub_id inesistente → 503', rMiss.status === 503);
+
+  // 17. Relay senza hub_id con più Pi connessi → 503 (ambiguo, non usare backward compat)
+  const rNoId = await httpPost(relayPort3, '/relay',
+    { method: 'GET', path: '/api/hub/health' },
+    { Authorization: `Bearer ${RELAY_TOKEN}` },
+  );
+  ok('multi-hub: relay senza hub_id e 2 Pi → 503', rNoId.status === 503);
+
+  piA.close();
+  piB.close();
+  bridge3.close();
 
   console.log(`\nTotal: ${passed + failed} Passed: ${passed} Failed: ${failed}`);
   process.exit(failed > 0 ? 1 : 0);

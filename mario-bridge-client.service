@@ -1,0 +1,21 @@
+[Unit]
+Description=MARIO Remote Bridge Client
+Documentation=https://github.com/bianchi970/mario-remote-bridge
+After=network-online.target mario-hub.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mario
+WorkingDirectory=/home/mario/mario-remote-bridge
+ExecStart=/usr/bin/node /home/mario/mario-remote-bridge/client.js
+Restart=always
+RestartSec=10
+EnvironmentFile=/home/mario/mario-remote-bridge/.env
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mario-bridge-client
+
+[Install]
+WantedBy=multi-user.target
