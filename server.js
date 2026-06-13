@@ -146,7 +146,7 @@ function createBridgeServer({
   });
 
   wss.on('listening', () => {
-    console.log(`[bridge] WS agent     → ws://0.0.0.0:${agentPort}`);
+    console.log(`[bridge] WS agent     → ws://${agentHost}:${agentPort}`);
   });
 
   // ── HTTP relay server — porta relayPort ────────────────────────────────────
