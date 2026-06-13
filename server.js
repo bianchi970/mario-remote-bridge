@@ -31,6 +31,7 @@ const { WebSocket, WebSocketServer } = require('ws');
  * Crea e avvia il bridge.
  * @param {object} opts
  * @param {number}  opts.agentPort
+ * @param {string}  opts.agentHost
  * @param {number}  opts.relayPort
  * @param {string}  opts.relayHost
  * @param {string}  opts.agentToken
@@ -40,6 +41,7 @@ const { WebSocket, WebSocketServer } = require('ws');
  */
 function createBridgeServer({
   agentPort       = 7001,
+  agentHost       = '127.0.0.1',
   relayPort       = 7002,
   relayHost       = '127.0.0.1',
   agentToken      = '',
@@ -90,7 +92,7 @@ function createBridgeServer({
 
   // ── WebSocket server — porta agentPort ─────────────────────────────────────
 
-  const wss = new WebSocketServer({ port: agentPort });
+  const wss = new WebSocketServer({ port: agentPort, host: agentHost });
 
   wss.on('connection', (ws, req) => {
     const url    = new URL(req.url, 'http://localhost');
@@ -227,6 +229,7 @@ if (require.main === module) {
 
   createBridgeServer({
     agentPort:      parseInt(process.env.AGENT_PORT       || '7001', 10),
+    agentHost:      process.env.AGENT_HOST                || '127.0.0.1',
     relayPort:      parseInt(process.env.RELAY_PORT       || '7002', 10),
     relayHost:      process.env.RELAY_HOST                || '127.0.0.1',
     agentToken:     AGENT_TOKEN,
