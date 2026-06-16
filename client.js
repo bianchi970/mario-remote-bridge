@@ -44,10 +44,11 @@ function createBridgeClient({
 } = {}) {
   if (!bridgeUrl) throw new Error('bridgeUrl obbligatorio');
 
-  let ws         = null;
-  let delay      = reconnectDelayMs;
-  let stopped    = false;
-  let reconnTimer = null;
+  let ws           = null;
+  let delay        = reconnectDelayMs;
+  let stopped      = false;
+  let reconnTimer  = null;
+  let pingInterval = null;
 
   function connect() {
     if (stopped) return;
@@ -63,6 +64,10 @@ function createBridgeClient({
     ws.on('open', () => {
       console.log(`[bridge-client] connesso hub_id="${hubId}" → ${bridgeUrl}`);
       delay = reconnectDelayMs; // reset backoff
+      // heartbeat ogni 30s — evita NAT timeout sul router
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.ping();
+      }, 30_000);
     });
 
     ws.on('message', async (raw) => {
@@ -90,6 +95,7 @@ function createBridgeClient({
     });
 
     ws.on('close', (code) => {
+      clearInterval(pingInterval);
       console.log(`[bridge-client] disconnesso (${code}) — riconnessione tra ${delay}ms`);
       if (!stopped) {
         reconnTimer = setTimeout(connect, delay);
@@ -105,6 +111,7 @@ function createBridgeClient({
 
   function stop() {
     stopped = true;
+    clearInterval(pingInterval);
     clearTimeout(reconnTimer);
     if (ws) ws.close();
   }
