@@ -96,11 +96,15 @@ function createBridgeServer({
 
   wss.on('connection', (ws, req) => {
     const url    = new URL(req.url, 'http://localhost');
-    const token  = url.searchParams.get('token') || '';
     const hubId  = url.searchParams.get('hub_id') || 'default';
 
+    // Auth: header Bearer preferito (sicuro, non nei log); query param accettato per compat
+    const authHeader  = (req.headers['authorization'] || '');
+    const headerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const queryToken  = url.searchParams.get('token') || '';
+    const token       = headerToken || queryToken;
+
     if (agentToken && token !== agentToken) {
-      console.log('[bridge] agent rifiutato: token non valido');
       ws.close(1008, 'unauthorized');
       return;
     }
