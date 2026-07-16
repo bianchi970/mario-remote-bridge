@@ -56,6 +56,10 @@ function createBridgeServer({
 
   // ── Relay core ─────────────────────────────────────────────────────────────
 
+  // Route AI richiedono più tempo per la pipeline Ollama/Gemma (~90 s).
+  const AI_RELAY_PATHS   = ['/brain/interpret', '/brain/diagnose'];
+  const AI_RELAY_TIMEOUT = 130_000;
+
   function relay({ hub_id, method, path, headers = {}, body = null }) {
     let socket = null;
 
@@ -71,12 +75,13 @@ function createBridgeServer({
     }
 
     const id = crypto.randomUUID();
+    const ms = AI_RELAY_PATHS.some(p => (path || '').includes(p)) ? AI_RELAY_TIMEOUT : relayTimeoutMs;
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error('timeout'));
-      }, relayTimeoutMs);
+      }, ms);
 
       pending.set(id, { resolve, reject, timer, ws: socket });
 
