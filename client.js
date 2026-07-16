@@ -159,7 +159,9 @@ function forwardToHub(hubUrl, { method, path, headers = {}, body = null }) {
     });
 
     req.on('error', reject);
-    req.setTimeout(8_000, () => req.destroy(new Error('Hub timeout')));
+    // Pipeline AI (interpret/diagnose) richiede fino a ~90 s — timeout differenziato.
+    const aiPath = ['/brain/interpret', '/brain/diagnose'].some(p => options.path.includes(p));
+    req.setTimeout(aiPath ? 130_000 : 8_000, () => req.destroy(new Error('Hub timeout')));
 
     const m = options.method;
     if (body !== null && (m === 'POST' || m === 'PUT' || m === 'PATCH')) {
