@@ -53,13 +53,15 @@ function createBridgeClient({
   function connect() {
     if (stopped) return;
 
+    // Il token va nell'intestazione, mai nell'indirizzo: un indirizzo finisce
+    // nei log di nginx sul VPS. Il commit B90 (luglio 2026) lo diceva già, e il
+    // client lo metteva ancora in `?token=` (verificato il 21/10/2026).
     const params = new URLSearchParams();
-    if (bridgeToken) params.set('token', bridgeToken);
-    if (hubId)       params.set('hub_id', hubId);
+    if (hubId) params.set('hub_id', hubId);
     const qs = params.toString();
     const url = bridgeUrl + (qs ? `?${qs}` : '');
 
-    ws = new WebSocket(url);
+    ws = new WebSocket(url, bridgeToken ? { headers: { Authorization: `Bearer ${bridgeToken}` } } : {});
 
     ws.on('open', () => {
       console.log(`[bridge-client] connesso hub_id="${hubId}" → ${bridgeUrl}`);
