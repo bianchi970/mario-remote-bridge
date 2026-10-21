@@ -62,14 +62,15 @@ function startServer(opts) {
   });
 }
 
+// Il Pi si autentica con l'intestazione, come il client vero (21/10/2026): il
+// token nell'indirizzo finiva nei log di nginx, e il server non lo accetta più.
 function connectPi(agentPort, token, hubId) {
   return new Promise((resolve, reject) => {
     const params = new URLSearchParams();
-    if (token) params.set('token', token);
     if (hubId)  params.set('hub_id', hubId);
     const qs  = params.toString();
     const url = `ws://127.0.0.1:${agentPort}${qs ? `?${qs}` : ''}`;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, token ? { headers: { Authorization: `Bearer ${token}` } } : {});
     ws.on('open', () => resolve(ws));
     ws.on('error', reject);
   });
@@ -150,9 +151,14 @@ async function run() {
   ok('relay 400 json malformato', r400.status === 400);
 
   // ── 5. Pi con token sbagliato → chiuso dal server ────────────────────────
-  const badPi = new WebSocket(`ws://127.0.0.1:${wsPort}?token=WRONG`);
+  const badPi = new WebSocket(`ws://127.0.0.1:${wsPort}`, { headers: { Authorization: 'Bearer WRONG' } });
   const badClose = await new Promise((resolve) => badPi.on('close', (code) => resolve(code)));
   ok('Pi token errato → chiusura 1008', badClose === 1008);
+
+  // ⛔ Il token GIUSTO nell'indirizzo non entra: un indirizzo finisce nei log.
+  const inChiaro = new WebSocket(`ws://127.0.0.1:${wsPort}?token=${AGENT_TOKEN}`);
+  const chiusoInChiaro = await new Promise((resolve) => inChiaro.on('close', (code) => resolve(code)));
+  ok('Pi con il token nell\'indirizzo → chiusura 1008', chiusoInChiaro === 1008);
 
   // ── 6. Pi si connette con token corretto ─────────────────────────────────
   const piWs = await connectPi(wsPort, AGENT_TOKEN, 'default');

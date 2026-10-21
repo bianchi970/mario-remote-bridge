@@ -103,11 +103,11 @@ function createBridgeServer({
     const url    = new URL(req.url, 'http://localhost');
     const hubId  = url.searchParams.get('hub_id') || 'default';
 
-    // Auth: header Bearer preferito (sicuro, non nei log); query param accettato per compat
+    // Auth: solo l'intestazione Bearer. Il token nell'indirizzo (`?token=`) finiva
+    // nei log di nginx, e dal 21/10/2026 il client non lo manda più: chi lo
+    // manda ancora lì non entra (prima era accettato «per compatibilità»).
     const authHeader  = (req.headers['authorization'] || '');
-    const headerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const queryToken  = url.searchParams.get('token') || '';
-    const token       = headerToken || queryToken;
+    const token       = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
     if (agentToken && token !== agentToken) {
       ws.close(1008, 'unauthorized');
